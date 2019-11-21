@@ -44,7 +44,12 @@ byte reader(unsigned long address)
 
 EDB db(&writer, &reader);
 int gRecNr = 1; // We start at index 1
-//-------------- DB Structures END --------------
+
+//-------------- Semaphores/Mutex' START---------
+SemaphoreHandle_t gSemDB;
+
+//-------------- Task headers START -------------
+void TaskListen(void*);
 
 void setup() {
   
@@ -72,10 +77,63 @@ void setup() {
     Serial.println(db.count());
     gRecNr = db.count() + 1; // index is [1,count(db)]
   }
+
+  gSemDB = xSemaphoreCreateBinary();
+  xSemaphoreGive(gSemDB);
+
+  xTaskCreate(TaskListen,
+  "TaskListen",
+  128,
+  NULL,
+  2,
+  NULL);
 }
 
+/*******************************************************************************
+* Name: TaskListen
+* Description: Listens for incoming packets, records and saves their value. 
+*               Afterwards, the current temperature is measured and sent back.
+* Note: Currently does not listen to incoming signals but generates dummy values
+*       instead.
+*******************************************************************************/
+void TaskListen(void* pParams)
+{
+  (void) pParams;
+  
+  for(;;)
+  {
+    char gw[5] = "GW04"; // moet worden uitgelezen uit packet, zie thibaut
+    int next_delay = 4;
+//    Serial.print("Received from gateway ");
+//    Serial.print(gw);
+//    Serial.print(". Next beacon: ");
+//    Serial.print(next_delay);
+//    Serial.println(" seconds.");
 
+    double temp = read_temp();
+//    Serial.print("Temperature: ");
+//    Serial.println(temp);
 
+    LoRa.beginPacket();
+    LoRa.print(temp);
+    LoRa.endPacket();    
+
+    xSemaphoreTake(gSemDB, portMAX_DELAY);
+    currentRecord.id = gRecNr++;
+    currentRecord.temp = temp;
+    currentRecord.next_beacon = next_delay;
+    db.appendRec( (byte*) &currentRecord );
+    xSemaphoreGive(gSemDB);
+    
+    vTaskDelay(2000 / portTICK_PERIOD_MS );
+  }
+}
+
+/*******************************************************************************
+* Name: loop
+* Description: This is the idle task. It puts the board to shallow sleep. (IDLE)
+*               Copied from https://feilipu.me/2015/11/24/arduino_freertos/
+*******************************************************************************/
 void loop() // Remember that loop() is simply the FreeRTOS idle task. Something to do, when there's nothing else to do.
 {
   // Digital Input Disable on Analogue Pins
@@ -130,4 +188,46 @@ void loop() // Remember that loop() is simply the FreeRTOS idle task. Something 
    
   // Ugh. I've been woken up. Better disable sleep mode.
   sleep_reset(); // sleep_reset is faster than sleep_disable() because it clears all sleep_mode() bits.
+}
+
+/*******************************************************************************
+* Name: read_temp
+* Description: Reads out temperature from the ATMEGA32u4 internal thermometer
+*               Based on ATMEGA32u4 datasheet and 
+*               https://playground.arduino.cc/Main/InternalTemperatureSensor/
+*******************************************************************************/
+inline double read_temp()
+{
+  unsigned int wADC;
+  double t;
+
+  // The internal temperature has to be used
+  // with the internal reference of 1.1V.
+  // Channel 8 can not be selected with
+  // the analogRead function yet.
+
+  // Set the internal reference and mux.
+  ADMUX = (_BV(REFS1) | _BV(REFS0) | _BV(MUX2) | _BV(MUX1)  | _BV(MUX0) );
+  ADCSRA |= _BV(ADEN);  // enable the ADC
+  ADCSRB |= _BV(MUX5);
+
+  //delay(20);            // wait for voltages to become stable.
+  vTaskDelay( 20 / portTICK_PERIOD_MS );
+
+
+  ADCSRA |= _BV(ADSC);  // Start the ADC
+
+  // Detect end-of-conversion
+  while (bit_is_set(ADCSRA,ADSC));
+  
+  //while ( ADIF & 1 == 0 );
+
+  // Reading register "ADCW" takes care of how to read ADCL and ADCH.
+  wADC = ADCW;
+
+  // The offset of 324.31 could be wrong. It is just an indication.
+  t = (wADC- 273.15);
+
+  // The returned temperature is in degrees Celcius.
+  return (t);
 }
