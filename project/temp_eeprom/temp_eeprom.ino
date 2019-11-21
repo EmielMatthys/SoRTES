@@ -24,6 +24,28 @@
 //   Zet temp sturen op hogere prioriteit dan opslaan task (kan worden gedaan na het sturen).
 //   Houd bij hoe lang het duurde om tasks uit te voeren --> om slaap beter te berekenen.
 
+//-------------- DB Structures START --------------
+#define TABLE_SIZE 512
+struct record {
+  int id;
+  double temp;
+  int next_beacon;
+} currentRecord;
+
+void writer(unsigned long address, byte data)
+{
+  EEPROM.write(address, data);
+}
+
+byte reader(unsigned long address)
+{
+  return EEPROM.read(address);
+}
+
+EDB db(&writer, &reader);
+int gRecNr = 1; // We start at index 1
+//-------------- DB Structures END --------------
+
 void setup() {
   
   Serial.begin(9600);
@@ -36,8 +58,23 @@ void setup() {
     while (true);                   // if failed, do nothing
   }
 
-  
+  // Attempt to open existing DB
+  EDB_Status stat = db.open(0);
+
+  if(stat != EDB_OK || db.count() == 0)
+  {
+    Serial.println("No table found, new will be created.");
+    db.create(0, TABLE_SIZE, sizeof(record));
+  }
+  else
+  {
+    Serial.print("Found previous table! Record count: ");
+    Serial.println(db.count());
+    gRecNr = db.count() + 1; // index is [1,count(db)]
+  }
 }
+
+
 
 void loop() // Remember that loop() is simply the FreeRTOS idle task. Something to do, when there's nothing else to do.
 {
