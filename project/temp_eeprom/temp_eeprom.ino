@@ -142,7 +142,8 @@ void TaskListen(void* pParams)
     currentRecord.id = gRecNr++;
     currentRecord.temp = temp;
     currentRecord.next_beacon = next_delay;
-    db.appendRec( (byte*) &currentRecord );
+    EDB_Status result = db.appendRec( (byte*) &currentRecord );
+    if(result != EDB_OK){print_dberror(result);}
     xSemaphoreGive(gSemDB);
     
     vTaskDelay(2000 / portTICK_PERIOD_MS );
