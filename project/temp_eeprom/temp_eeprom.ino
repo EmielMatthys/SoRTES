@@ -52,6 +52,10 @@ SemaphoreHandle_t gSemDB;
 
 //-------------- Task headers START -------------
 void TaskListen(void*);
+void TaskCommands(void*);
+void print_record(int);
+void print_whole_db();
+void print_dberror(EDB_Status);
 
 void setup() {
   
@@ -88,6 +92,13 @@ void setup() {
   128,
   NULL,
   2,
+  NULL);
+
+  xTaskCreate(TaskCommands,
+  "CommandTask",
+  128,
+  NULL,
+  0, // We dont need instant response for decent usability
   NULL);
 }
 
@@ -136,6 +147,92 @@ void TaskListen(void* pParams)
     
     vTaskDelay(2000 / portTICK_PERIOD_MS );
   }
+}
+
+/*******************************************************************************
+* Name: TaskCommands
+* Description: Checks if a serial command has been sent (approx every second) 
+*               and responds accordingly.
+* Cases:
+*   command == 1:   print the current record
+*   command == 2:   print all records in EEPROM
+*   command == 3:   enter deep sleep (powerdown)
+*******************************************************************************/
+void TaskCommands(void*)
+{
+  for(;;){
+    if(Serial.available()){
+      int command = Serial.parseInt();
+      switch(command){
+        case 1: 
+         print_record(currentRecord.id);
+         break;
+       case 2:
+        print_whole_db();
+        break;
+       case 3:
+        power_down();
+        break;
+      }
+    }
+  }
+  vTaskDelay(1000 / portTICK_PERIOD_MS); // Fast enough for usability
+}
+
+/*******************************************************************************
+* Name: print_record
+* Description: Prints the values (columns) of the record associated with the 
+*               given record id.
+* Params:
+*   rec:    The ID associated with the record to be printed.
+*******************************************************************************/
+inline void print_record(int rec)
+{
+  Serial.print("reno = ");
+  Serial.println(rec);
+  xSemaphoreTake(gSemDB, portMAX_DELAY);
+  EDB_Status result = db.readRec(rec, EDB_REC currentRecord);
+  if(result != EDB_OK) print_dberror(result);
+  Serial.print("Record ID: ");
+  Serial.println(currentRecord.id);
+  Serial.print("  temperature: ");
+  Serial.println(currentRecord.temp);
+  Serial.print("  next_beacon: ");
+  Serial.println(currentRecord.next_beacon);
+  xSemaphoreGive(gSemDB);
+}
+
+/*******************************************************************************
+* Name: print_dberror
+* Description: Prints an error message based on the given error status.
+* Params:
+*   err:    (EDB_Status) the status for which to print the error (see EDB library)
+*******************************************************************************/
+void print_dberror(EDB_Status err)
+{
+  Serial.print("DB ERROR: ");
+  switch (err)
+  {
+    case EDB_OUT_OF_RANGE:
+      Serial.println("Recno out of range");
+      break;
+    case EDB_TABLE_FULL:
+      Serial.println("Table full");
+      break;
+    case EDB_OK:
+    default:
+      Serial.println("OK");
+      break;
+  }
+}
+
+/*******************************************************************************
+* Name: print_whole_db
+* Description: Prints all the records stored in EEPROM
+*******************************************************************************/
+inline void print_whole_db()
+{
+  for(int i = 1; i <= db.count(); i++) { print_record(i); }
 }
 
 /*******************************************************************************
