@@ -118,8 +118,8 @@ void TaskListen(void* pParams)
   {
     if(gBeaconCount++ >= 20)
     {
-      //power_down();
-      vTaskDelay(portMAX_DELAY);
+      power_down();
+      //vTaskDelay(portMAX_DELAY);
       continue;
     }
     char gw[5] = "GW04"; // moet worden uitgelezen uit packet, zie thibaut
@@ -188,7 +188,7 @@ void TaskCommands(void*)
 *******************************************************************************/
 inline void print_record(int rec)
 {
-  Serial.print("reno = ");
+  Serial.print("recno = ");
   Serial.println(rec);
   xSemaphoreTake(gSemDB, portMAX_DELAY);
   EDB_Status result = db.readRec(rec, EDB_REC currentRecord);
