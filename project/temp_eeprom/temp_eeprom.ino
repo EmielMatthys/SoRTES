@@ -24,6 +24,8 @@
 //   Zet temp sturen op hogere prioriteit dan opslaan task (kan worden gedaan na het sturen).
 //   Houd bij hoe lang het duurde om tasks uit te voeren --> om slaap beter te berekenen.
 
+#define INCLUDE_vTaskSuspend 1;
+
 //-------------- DB Structures START --------------
 #define TABLE_SIZE 512
 struct record {
@@ -96,12 +98,19 @@ void setup() {
 * Note: Currently does not listen to incoming signals but generates dummy values
 *       instead.
 *******************************************************************************/
+int gBeaconCount = 0;
 void TaskListen(void* pParams)
 {
   (void) pParams;
   
   for(;;)
   {
+    if(gBeaconCount++ >= 20)
+    {
+      //power_down();
+      vTaskDelay(portMAX_DELAY);
+      continue;
+    }
     char gw[5] = "GW04"; // moet worden uitgelezen uit packet, zie thibaut
     int next_delay = 4;
 //    Serial.print("Received from gateway ");
@@ -230,4 +239,23 @@ inline double read_temp()
 
   // The returned temperature is in degrees Celcius.
   return (t);
+}
+
+/*******************************************************************************
+* Name: power_down
+* Description: Puts the board into deep sleep mode (powerdown).
+*               See datasheet for waking up sources (mostly external int's).
+*******************************************************************************/
+void power_down()
+{
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+  cli();
+  sleep_enable();
+  #if defined(BODS) && defined(BODSE)
+  sleep_bod_disable();
+  #endif
+  sei();
+  sleep_cpu();
+  sleep_disable();
+  sei();  
 }
