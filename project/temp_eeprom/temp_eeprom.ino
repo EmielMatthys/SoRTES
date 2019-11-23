@@ -122,8 +122,26 @@ void TaskListen(void* pParams)
       //vTaskDelay(portMAX_DELAY);
       continue;
     }
-    char gw[5] = "GW04"; // moet worden uitgelezen uit packet, zie thibaut
-    int next_delay = 4;
+    int packetSize = LoRa.parsePacket();
+    String Message;
+    String Delay;
+    if (packetSize) {
+      int charCounter = 0;
+      while (charCounter<4) {
+        charCounter++;
+        char c = (char)LoRa.read();
+        Message += c;
+        Serial.write(c);
+      }
+      while (LoRa.available()) {
+        Delay+=LoRa.read();
+      }
+    }
+    int next_delay = Delay.toInt();
+    TickType_t ticks= next_delay*1000/portTICK_PERIOD_MS;
+    vTaskDelay(ticks-30);
+    
+    //char gw[5] = "GW04"; // moet worden uitgelezen uit packet, zie thibaut
 //    Serial.print("Received from gateway ");
 //    Serial.print(gw);
 //    Serial.print(". Next beacon: ");
@@ -260,7 +278,7 @@ void loop() // Remember that loop() is simply the FreeRTOS idle task. Something 
    
   #elif defined(__AVR_ATmega32U4__) || defined(__AVR_ATmega16U4__) // assume we're using an Arduino Leonardo with 32u4
   DIDR0 = 0xF3;
-  DIDR2 = 0x3F;
+  DIDR2 = 0x3F; // Digital input Disable Register
   #endif
   // Analogue Comparator Disable
   // When the ACD bit is written logic one, the power to the Analogue Comparator is switched off.
@@ -270,6 +288,16 @@ void loop() // Remember that loop() is simply the FreeRTOS idle task. Something 
   // Otherwise an interrupt can occur when the ACD bit is changed.
   ACSR &= ~_BV(ACIE);
   ACSR |= _BV(ACD);
+
+  // We need to compare benefits of turning ADC off versus the extra cost of extended conversion => first conversion takes twice as long
+  //PRR0 |= _BV(PRADC);
+  // - Brown-out detector can be turned off
+  // Is done in critical section later =>
+  // - WatchDogTimer can also be turned off
+  //wdt_reset();
+  //wdt_disable();
+  // - OCD can be turned off by writing one to the JTD bit in MCUCR
+  //MCUCR |= _BV(JTD);
    
   // There are several macros provided in the header file to actually put
   // the device into sleep mode.
@@ -280,9 +308,9 @@ void loop() // Remember that loop() is simply the FreeRTOS idle task. Something 
   // SLEEP_MODE_STANDBY (_BV(SM1) | _BV(SM2))
   // SLEEP_MODE_EXT_STANDBY (_BV(SM0) | _BV(SM1) | _BV(SM2))
    
-  set_sleep_mode( SLEEP_MODE_IDLE );
+  set_sleep_mode( SLEEP_MODE_IDLE ); // This should potentially go down to EXT_STANDBY or PWR_DOWN
    
-  portENTER_CRITICAL();
+  portENTER_CRITICAL(); //Enter critical section
   sleep_enable();
    
   // Only if there is support to disable the brown-out detection.
@@ -290,7 +318,7 @@ void loop() // Remember that loop() is simply the FreeRTOS idle task. Something 
   sleep_bod_disable();
   #endif
    
-  portEXIT_CRITICAL();
+  portEXIT_CRITICAL(); // Exit critical section
   sleep_cpu(); // good night.
    
   // Ugh. I've been woken up. Better disable sleep mode.
