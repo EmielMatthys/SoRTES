@@ -25,6 +25,10 @@
 //   Houd bij hoe lang het duurde om tasks uit te voeren --> om slaap beter te berekenen.
 
 #define INCLUDE_vTaskSuspend 1;
+#define PACKET_SIZE 6
+#define WAKEUP_MARGIN_TICKS 30
+#define DEBUG 1
+#define DEBUG_DUMMY 1
 
 //-------------- DB Structures START --------------
 #define TABLE_SIZE 512
@@ -57,6 +61,7 @@ void print_record(int);
 void print_whole_db();
 void print_dberror(EDB_Status);
 
+int gBeaconCount = 0;
 void setup() {
   
   Serial.begin(9600);
@@ -87,7 +92,8 @@ void setup() {
   gSemDB = xSemaphoreCreateBinary();
   xSemaphoreGive(gSemDB);
 
-  digitalWrite(LED_BUILTIN, LOW); // Turn of the BuiltIn LED
+  gBeaconCount = 0;
+  digitalWrite(LED_BUILTIN, LOW); // Turn off the BuiltIn LED
 
   xTaskCreate(TaskListen,
   "TaskListen",
@@ -111,65 +117,128 @@ void setup() {
 * Note: Currently does not listen to incoming signals but generates dummy values
 *       instead.
 *******************************************************************************/
-int gBeaconCount = 0;
 void TaskListen(void* pParams)
 {
   (void) pParams;
   
   for(;;)
   {
-    if(gBeaconCount++ >= 20)
+    if(gBeaconCount >= 20)
     {
-      Serial.println("Going into power down")
+      Serial.println("Going into power down");
       power_down();
       //vTaskDelay(portMAX_DELAY);
       continue;
     }
+
+    // Parse incoming packet
     int packetSize = LoRa.parsePacket();
-    String Message;
-    String Delay;
-    if (packetSize) {
-      int charCounter = 0;
-      while (charCounter<4) {
-        charCounter++;
-        char c = (char)LoRa.read();
-        Message += c;
-        Serial.write(c);
-      }
+    #ifdef DEBUG_DUMMY
+    packetSize = 6;
+    #endif
+    
+    if (packetSize == PACKET_SIZE )
+    {
+      // Read whole packet into char buffer of same size
+      char inputBuffer[packetSize]; // Kan zijn dat dit niet werkt
+      inputBuffer[packetSize] = 0;
+      int i = 0;
       while (LoRa.available()) {
-        Delay+=LoRa.read();
+        inputBuffer[i++] = (char)LoRa.read();
+      }
+
+      #ifdef DEBUG_DUMMY
+      dummyBeacon(inputBuffer, PACKET_SIZE);
+      #endif
+      
+      Serial.print("Received packet: ");
+      Serial.println(inputBuffer);
+
+      // Check if correct GW number
+      if(inputBuffer[2] == '0' && inputBuffer[3] == '4')
+      {
+        // Convert next delay chars to integer and tickcount
+        int iDelay = parseDelay(&inputBuffer[4]);
+        //int iDelay = String(&inputBuffer[5]).toInt();
+        TickType_t tDelay = iDelay*1000/portTICK_PERIOD_MS;
+
+        #ifdef DEBUG
+        Serial.print("Converted iDelay, tDelay: ");
+        Serial.print(iDelay);
+        Serial.print(", ");
+        Serial.println(tDelay);
+        #endif
+        
+        // Read the temperature of the chip and send the result back to the GW
+        double temp = read_temp();
+  
+        LoRa.beginPacket();
+        LoRa.print(temp); //TODO: More info like Team num?
+        LoRa.endPacket();    
+
+        // Before writing to DB, attempt to take the Semaphore for it
+        xSemaphoreTake(gSemDB, portMAX_DELAY);
+
+        // The currentRecord struct object is used to create and read records.
+        currentRecord.id = gRecNr++;
+        currentRecord.temp = temp;
+        currentRecord.next_beacon = iDelay;
+
+        // After filling out the record object, we attempt to append it to the database
+        EDB_Status result = db.appendRec( (byte*) &currentRecord );
+        if(result != EDB_OK){print_dberror(result);}
+
+        // Give Semaphore back
+        xSemaphoreGive(gSemDB);
+
+        // Delay this task so the board can go to shallow sleep
+        vTaskDelay(tDelay - WAKEUP_MARGIN_TICKS); 
+        continue;
       }
     }
-    int next_delay = Delay.toInt();
-    TickType_t ticks= next_delay*1000/portTICK_PERIOD_MS;
-    vTaskDelay(ticks-30); // Not enough to wake up if we 
     
-//    char gw[5] = "GW04"; // moet worden uitgelezen uit packet, zie thibaut
-//    Serial.println("-----Beacon-----");
-//    Serial.print("Current gBeaconCount: ");
-//    Serial.println(gBeaconCount);
-//    Serial.print("Next beacon in ");
-//    Serial.print(next_delay);
-//    Serial.println(" seconds.");
-
-    double temp = read_temp();
-//    Serial.print("Temperature: ");
-//    Serial.println(temp);
-
-    LoRa.beginPacket();
-    LoRa.print(temp);
-    LoRa.endPacket();    
-
-    xSemaphoreTake(gSemDB, portMAX_DELAY);
-    currentRecord.id = gRecNr++;
-    currentRecord.temp = temp;
-    currentRecord.next_beacon = next_delay;
-    EDB_Status result = db.appendRec( (byte*) &currentRecord );
-    if(result != EDB_OK){print_dberror(result);}
-    xSemaphoreGive(gSemDB);
+    // This section only executes when something about the packet was incorrect (size, GW number...)
+    while (LoRa.available()) { LoRa.read(); }
+    vTaskDelay(1); // Give lower tasks a chance ;)
     
-    vTaskDelay(2000 / portTICK_PERIOD_MS );
   }
+}
+
+inline int parseDelay(char* buff)
+{
+  #ifdef DEBUG
+  Serial.print("Parser called with: "); //TODO: wtf is dees
+  Serial.print((int) buff[0]);
+  Serial.println((int) buff[1]);
+  #endif
+  int result = 0;
+  if((int) buff[0] >= 48 && (int) buff[0] <= 57)
+  {
+    result += (int) buff[0] - 48;
+    result *= 10;
+  }
+  else return 0;
+  
+  if((int) buff[1] >= 48 && (int) buff[1] <= 57)
+  {
+    result += (int) buff[1] - 48;
+  }
+  else return 0;
+
+  return result;
+}
+
+inline int dummyBeacon(char* buff, size_t size)
+{
+  if(size != PACKET_SIZE) {return;}
+  buff[0] = 'G';
+  buff[1] = 'W';
+  buff[2] = '0';
+  buff[3] = '4';
+
+  buff[4] = '0';
+  buff[5] = '9';
+  return PACKET_SIZE;
 }
 
 /*******************************************************************************
@@ -188,7 +257,7 @@ void TaskCommands(void*) //Commands should only be supported in deep sleep => ak
       int command = Serial.parseInt();
       switch(command){
         case 1: 
-         print_record(currentRecord.id);
+         print_record(db.count());
          break;
        case 2:
         print_whole_db();
