@@ -87,6 +87,8 @@ void setup() {
   gSemDB = xSemaphoreCreateBinary();
   xSemaphoreGive(gSemDB);
 
+  digitalWrite(LED_BUILTIN, LOW); // Turn of the BuiltIn LED
+
   xTaskCreate(TaskListen,
   "TaskListen",
   128,
