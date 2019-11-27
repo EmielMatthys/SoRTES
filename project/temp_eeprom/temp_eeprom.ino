@@ -204,10 +204,18 @@ void TaskListen(void* pParams)
   }
 }
 
+/*******************************************************************************
+* Name: parseDelay
+* Description: Transforms the given characters (2) into an integer. 
+*               0 <= result <= 99
+*               0 if not parsable
+*Parameter: char* buff :
+*             Buffer containing the two characters to be parsed
+*******************************************************************************/
 inline int parseDelay(char* buff)
 {
   #ifdef DEBUG
-  Serial.print("Parser called with: "); //TODO: wtf is dees
+  Serial.print("Parser called with: ");
   Serial.print((int) buff[0]);
   Serial.println((int) buff[1]);
   #endif
@@ -228,6 +236,16 @@ inline int parseDelay(char* buff)
   return result;
 }
 
+/*******************************************************************************
+* Name: dummyBeacon
+* Description: Generates dummy input to test the ListenTask command
+*         Result is of this form:
+*           buff[0..1] == 'GW'
+*           buff[2..3] == XX where XX represents the GW number (eg 04)
+*           buff[4..5] == YY where YY represents the delay (eg 09)
+*        Returns the size of the buffer
+* Note: only works if size == PACKET_SIZE (== 6)
+*******************************************************************************/
 inline int dummyBeacon(char* buff, size_t size)
 {
   if(size != PACKET_SIZE) {return;}
