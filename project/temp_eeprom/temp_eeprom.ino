@@ -120,6 +120,7 @@ void TaskListen(void* pParams)
   {
     if(gBeaconCount++ >= 20)
     {
+      Serial.println("Going into power down")
       power_down();
       //vTaskDelay(portMAX_DELAY);
       continue;
@@ -141,12 +142,13 @@ void TaskListen(void* pParams)
     }
     int next_delay = Delay.toInt();
     TickType_t ticks= next_delay*1000/portTICK_PERIOD_MS;
-    vTaskDelay(ticks-30);
+    vTaskDelay(ticks-30); // Not enough to wake up if we 
     
-    //char gw[5] = "GW04"; // moet worden uitgelezen uit packet, zie thibaut
-//    Serial.print("Received from gateway ");
-//    Serial.print(gw);
-//    Serial.print(". Next beacon: ");
+//    char gw[5] = "GW04"; // moet worden uitgelezen uit packet, zie thibaut
+//    Serial.println("-----Beacon-----");
+//    Serial.print("Current gBeaconCount: ");
+//    Serial.println(gBeaconCount);
+//    Serial.print("Next beacon in ");
 //    Serial.print(next_delay);
 //    Serial.println(" seconds.");
 
@@ -179,7 +181,7 @@ void TaskListen(void* pParams)
 *   command == 2:   print all records in EEPROM
 *   command == 3:   enter deep sleep (powerdown)
 *******************************************************************************/
-void TaskCommands(void*)
+void TaskCommands(void*) //Commands should only be supported in deep sleep => aka ADC can turn off
 {
   for(;;){
     if(Serial.available()){
@@ -325,6 +327,7 @@ void loop() // Remember that loop() is simply the FreeRTOS idle task. Something 
    
   // Ugh. I've been woken up. Better disable sleep mode.
   sleep_reset(); // sleep_reset is faster than sleep_disable() because it clears all sleep_mode() bits.
+  // Shouldnt more stuff be turned on again
 }
 
 /*******************************************************************************
