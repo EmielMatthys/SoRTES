@@ -53,6 +53,7 @@ int gRecNr = 1; // We start at index 1
 
 //-------------- Semaphores/Mutex' START---------
 SemaphoreHandle_t gSemDB;
+SemaphoreHandle_t gSemCommand;
 
 //-------------- Task headers START -------------
 void TaskListen(void*);
@@ -90,7 +91,10 @@ void setup() {
   }
 
   gSemDB = xSemaphoreCreateBinary();
-  xSemaphoreGive(gSemDB);
+  xSemaphoreGive(gSemDB); 
+
+  gSemCommand = xSemaphoreCreateBinary();
+  xSemaphoreTake(gSemCommand, 0); // Take it if not taken already
 
   gBeaconCount = 0;
   digitalWrite(LED_BUILTIN, LOW); // Turn off the BuiltIn LED
@@ -134,7 +138,7 @@ void TaskListen(void* pParams)
     // Parse incoming packet
     int packetSize = LoRa.parsePacket();
     #ifdef DEBUG_DUMMY
-    packetSize = 6;
+    packetSize = PACKET_SIZE;
     #endif
     
     if (packetSize == PACKET_SIZE )
@@ -192,6 +196,7 @@ void TaskListen(void* pParams)
         xSemaphoreGive(gSemDB);
 
         // Delay this task so the board can go to shallow sleep
+        LoRa.sleep();
         vTaskDelay(tDelay - WAKEUP_MARGIN_TICKS); 
         continue;
       }
@@ -247,15 +252,13 @@ inline int dummyBeacon(char* buff, size_t size)
   buff[2] = '0';
   buff[3] = '4';
 
-  buff[4] = '0';
-  buff[5] = '9';
+  buff[4] = '9';
   return PACKET_SIZE;
 }
 
 /*******************************************************************************
 * Name: TaskCommands
-* Description: Checks if a serial command has been sent (approx every second) 
-*               and responds accordingly.
+* Description: Checks if a serial command has been sent and responds accordingly.
 * Cases:
 *   command == 1:   print the current record
 *   command == 2:   print all records in EEPROM
@@ -264,9 +267,12 @@ inline int dummyBeacon(char* buff, size_t size)
 void TaskCommands(void*) //Commands should only be supported in deep sleep => aka ADC can turn off
 {
   for(;;){
+    xSemaphoreTake(gSemCommand, portMAX_DELAY);
     if(Serial.available()){
       int command = Serial.parseInt();
       switch(command){
+        case 0: // null char / eos
+          break;
         case 1: 
          print_record(db.count());
          break;
@@ -276,10 +282,15 @@ void TaskCommands(void*) //Commands should only be supported in deep sleep => ak
        case 3:
         power_down();
         break;
+       default:
+        Serial.print("Invalid command: ");
+        Serial.println(command);
+        break;
       }
+      Serial.flush();
     }
   }
-  vTaskDelay(1000 / portTICK_PERIOD_MS); // Fast enough for usability
+  //vTaskDelay(1000 / portTICK_PERIOD_MS); // Fast enough for usability
 }
 
 /*******************************************************************************
@@ -391,9 +402,9 @@ void loop() // Remember that loop() is simply the FreeRTOS idle task. Something 
   // SLEEP_MODE_PWR_SAVE (_BV(SM0) | _BV(SM1))
   // SLEEP_MODE_STANDBY (_BV(SM1) | _BV(SM2))
   // SLEEP_MODE_EXT_STANDBY (_BV(SM0) | _BV(SM1) | _BV(SM2))
-   
+//   cli();
   set_sleep_mode( SLEEP_MODE_IDLE ); // This should potentially go down to EXT_STANDBY or PWR_DOWN
-   
+//  set_sleep_mode( SLEEP_MODE_EXT_STANDBY );
   portENTER_CRITICAL(); //Enter critical section
   sleep_enable();
    
@@ -403,11 +414,16 @@ void loop() // Remember that loop() is simply the FreeRTOS idle task. Something 
   #endif
    
   portEXIT_CRITICAL(); // Exit critical section
+//  sei();
   sleep_cpu(); // good night.
    
   // Ugh. I've been woken up. Better disable sleep mode.
   sleep_reset(); // sleep_reset is faster than sleep_disable() because it clears all sleep_mode() bits.
+//  sei();
+  delay(100);
   // Shouldnt more stuff be turned on again
+  if(Serial.available())
+    xSemaphoreGive(gSemCommand); // Signal Command Task
 }
 
 /*******************************************************************************
@@ -475,7 +491,7 @@ void power_down()
 //  power_timer2_disable();
 //  power_twi_disable();
   sei();
-  sleep_mode();
+  sleep_cpu();
   sleep_disable();
 //  power_all_enable();
   sei();  
@@ -484,4 +500,5 @@ void power_down()
   //Serial.begin(9600);
   //while(!Serial) {;}
   Serial.println("I have awoken!");
+  gBeaconCount = 0;
 }
