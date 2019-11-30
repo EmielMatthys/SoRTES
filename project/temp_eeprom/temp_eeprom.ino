@@ -459,14 +459,29 @@ inline double read_temp()
 *******************************************************************************/
 void power_down()
 {
+  Serial.println("Powering down");
+  delay(100);
+  //Serial.end();
   set_sleep_mode(SLEEP_MODE_PWR_DOWN);
   cli();
   sleep_enable();
   #if defined(BODS) && defined(BODSE)
   sleep_bod_disable();
   #endif
+//  power_adc_disable();
+//  power_spi_disable();
+//  power_timer0_disable();
+//  power_timer1_disable();
+//  power_timer2_disable();
+//  power_twi_disable();
   sei();
-  sleep_cpu();
+  sleep_mode();
   sleep_disable();
+//  power_all_enable();
   sei();  
+  delay(100);
+  Serial.flush();
+  //Serial.begin(9600);
+  //while(!Serial) {;}
+  Serial.println("I have awoken!");
 }
