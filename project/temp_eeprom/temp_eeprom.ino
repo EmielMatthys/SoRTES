@@ -25,10 +25,10 @@
 //   Houd bij hoe lang het duurde om tasks uit te voeren --> om slaap beter te berekenen.
 
 #define INCLUDE_vTaskSuspend 1;
-#define PACKET_SIZE 6
+#define PACKET_SIZE 5
 #define WAKEUP_MARGIN_TICKS 30
 #define DEBUG 1
-#define DEBUG_DUMMY 1
+//#define DEBUG_DUMMY 1
 
 //-------------- DB Structures START --------------
 #define TABLE_SIZE 512
@@ -223,13 +223,6 @@ inline int parseDelay(char* buff)
   if((int) buff[0] >= 48 && (int) buff[0] <= 57)
   {
     result += (int) buff[0] - 48;
-    result *= 10;
-  }
-  else return 0;
-  
-  if((int) buff[1] >= 48 && (int) buff[1] <= 57)
-  {
-    result += (int) buff[1] - 48;
   }
   else return 0;
 
