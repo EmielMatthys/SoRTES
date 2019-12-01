@@ -420,7 +420,7 @@ void loop() // Remember that loop() is simply the FreeRTOS idle task. Something 
   // Ugh. I've been woken up. Better disable sleep mode.
   sleep_reset(); // sleep_reset is faster than sleep_disable() because it clears all sleep_mode() bits.
 //  sei();
-  delay(100);
+  //delay(100);
   // Shouldnt more stuff be turned on again
   if(Serial.available())
     xSemaphoreGive(gSemCommand); // Signal Command Task
@@ -475,6 +475,7 @@ inline double read_temp()
 *******************************************************************************/
 void power_down()
 {
+  LoRa.sleep(); // Make sure the radio is off
   Serial.println("Powering down");
   delay(100);
   //Serial.end();
