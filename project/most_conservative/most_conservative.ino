@@ -197,13 +197,13 @@ void TaskListen(void* pParams)
         
         // Read the temperature of the chip and send the result back to the GW
         bWarmingUp = true;
-        vTaskDelay(15); // Allow ADC to recover from sleep
+        //vTaskDelay(15); // Allow ADC to recover from sleep
         
         double temp = read_temp();
         bWarmingUp = false;
   
         LoRa.beginPacket();
-        LoRa.print(temp); //TODO: More info like Team num?
+        LoRa.print(temp);
         LoRa.endPacket();  
         gBeaconCount++;
         
@@ -525,12 +525,13 @@ inline void power_down()
   #if defined(BODS) && defined(BODSE)
   sleep_bod_disable();
   #endif
-  power_adc_disable();
-  power_spi_disable();
-  power_timer0_disable();
-  power_timer1_disable();
-  power_timer2_disable();
-  power_twi_disable();
+//  power_adc_disable();
+//  power_spi_disable();
+//  power_timer0_disable();
+//  power_timer1_disable();
+//  power_timer2_disable();
+//  power_twi_disable();
+  power_all_disable();
   sleep_cpu();
   sleep_disable();
   power_all_enable();
