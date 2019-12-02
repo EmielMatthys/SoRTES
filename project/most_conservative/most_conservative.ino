@@ -28,7 +28,7 @@
 #define PACKET_SIZE 5
 #define WAKEUP_MARGIN_TICKS 30
 #define DEBUG 1
-//#define DEBUG_DUMMY 1
+#define DEBUG_DUMMY 1
 
 //-------------- DB Structures START --------------
 #define TABLE_SIZE 512
@@ -75,8 +75,7 @@ void setup() {
     while (true);                   // if failed, do nothing
   }
 
-    pinMode(LED_BUILTIN,OUTPUT);
-
+  pinMode(LED_BUILTIN,OUTPUT);
 
   // Attempt to open existing DB
   EDB_Status stat = db.open(0);
@@ -179,12 +178,14 @@ void TaskListen(void* pParams)
         #endif
         
         // Read the temperature of the chip and send the result back to the GW
+        //delay(100);
         double temp = read_temp();
   
         LoRa.beginPacket();
         LoRa.print(temp); //TODO: More info like Team num?
         LoRa.endPacket();    
-
+        gBeaconCount++;
+        
         // Before writing to DB, attempt to take the Semaphore for it
         xSemaphoreTake(gSemDB, portMAX_DELAY);
 
@@ -202,7 +203,7 @@ void TaskListen(void* pParams)
 
         // Delay this task so the board can go to shallow sleep
         if(--gLedCount <= 0)
-          digitalWrite(LED_BUILTIN, LOW);
+        digitalWrite(LED_BUILTIN, LOW);
         LoRa.sleep();
         vTaskDelay(tDelay - WAKEUP_MARGIN_TICKS); 
         continue;
@@ -274,6 +275,8 @@ void TaskCommands(void*) //Commands should only be supported in deep sleep => ak
 {
   for(;;){
     xSemaphoreTake(gSemCommand, portMAX_DELAY);
+    digitalWrite(LED_BUILTIN, HIGH);
+    gLedCount++;
     if(Serial.available()){
       int command = Serial.parseInt();
       switch(command){
@@ -293,7 +296,7 @@ void TaskCommands(void*) //Commands should only be supported in deep sleep => ak
         Serial.println(command);
         break;
       }
-      Serial.flush();
+      //Serial.flush();
     }
     if(--gLedCount <= 0)
       digitalWrite(LED_BUILTIN, LOW);
@@ -364,30 +367,14 @@ inline void print_whole_db()
 *******************************************************************************/
 void loop() // Remember that loop() is simply the FreeRTOS idle task. Something to do, when there's nothing else to do.
 {
-  digitalWrite(LED_BUILTIN, LOW);
+  
   power_adc_disable();
-  power_spi_disable();
+//  power_spi_disable();
   power_twi_disable();
   power_timer0_disable();
   power_timer1_disable();
-
-  cli();
-  // Digital Input Disable on Analogue Pins
-  // When this bit is written logic one, the digital input buffer on the corresponding ADC pin is disabled.
-  // The corresponding PIN Register bit will always read as zero when this bit is set. When an
-  // analogue signal is applied to the ADC7..0 pin and the digital input from this pin is not needed, this
-  // bit should be written logic one to reduce power consumption in the digital input buffer.
    
-  #if defined(__AVR_ATmega640__) || defined(__AVR_ATmega1280__) || defined(__AVR_ATmega1281__) || defined(__AVR_ATmega2560__) || defined(__AVR_ATmega2561__) // Mega with 2560
-  DIDR0 = 0xFF;
-  DIDR2 = 0xFF;
-  #elif defined(__AVR_ATmega644P__) || defined(__AVR_ATmega644PA__) || defined(__AVR_ATmega1284P__) || defined(__AVR_ATmega1284PA__) // Goldilocks with 1284p
-  DIDR0 = 0xFF;
-   
-  #elif defined(__AVR_ATmega328P__) || defined(__AVR_ATmega168__) || defined(__AVR_ATmega8__) // assume we're using an Arduino with 328p
-  DIDR0 = 0x3F;
-   
-  #elif defined(__AVR_ATmega32U4__) || defined(__AVR_ATmega16U4__) // assume we're using an Arduino Leonardo with 32u4
+  #if defined(__AVR_ATmega32U4__) || defined(__AVR_ATmega16U4__) // assume we're using an Arduino Leonardo with 32u4
   DIDR0 = 0xF3;
   DIDR2 = 0x3F; // Digital input Disable Register
   #endif
@@ -418,29 +405,19 @@ void loop() // Remember that loop() is simply the FreeRTOS idle task. Something 
   // SLEEP_MODE_PWR_SAVE (_BV(SM0) | _BV(SM1))
   // SLEEP_MODE_STANDBY (_BV(SM1) | _BV(SM2))
   // SLEEP_MODE_EXT_STANDBY (_BV(SM0) | _BV(SM1) | _BV(SM2))
-//   cli();
+  
   set_sleep_mode( SLEEP_MODE_IDLE ); // This should potentially go down to EXT_STANDBY or PWR_DOWN
-//  set_sleep_mode( SLEEP_MODE_EXT_STANDBY );
-  portENTER_CRITICAL(); //Enter critical section
+
+  portENTER_CRITICAL();
   sleep_enable();
-   
-  // Only if there is support to disable the brown-out detection.
-  #if defined(BODS) && defined(BODSE)
-  sleep_bod_disable();
-  #endif
-   
-  portEXIT_CRITICAL(); // Exit critical section
-  sei();
+  
+  portEXIT_CRITICAL();
   sleep_cpu(); // good night.
    
   // Ugh. I've been woken up. Better disable sleep mode.
   sleep_reset(); // sleep_reset is faster than sleep_disable() because it clears all sleep_mode() bits.
   power_all_enable();
-  sei();
-  delay(100);
-
-  digitalWrite(LED_BUILTIN, HIGH);//digitalRead(LED_BUILTIN) ^ 1);
-
+  
   // Shouldnt more stuff be turned on again
   if(Serial.available())
     xSemaphoreGive(gSemCommand); // Signal Command Task
