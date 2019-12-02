@@ -26,9 +26,9 @@
 
 #define INCLUDE_vTaskSuspend 1;
 #define PACKET_SIZE 5
-#define WAKEUP_MARGIN_TICKS 30
+#define WAKEUP_MARGIN_TICKS 35
 #define DEBUG 1
-#define DEBUG_DUMMY 1
+//#define DEBUG_DUMMY 1
 
 //-------------- DB Structures START --------------
 #define TABLE_SIZE 512
@@ -63,10 +63,11 @@ void print_whole_db();
 void print_dberror(EDB_Status);
 
 int gBeaconCount = 0;
+bool bWarmingUp = false;
 void setup() {
   
   Serial.begin(9600);
-  while(!Serial) {;}
+  //while(!Serial) {;}
   
   LoRa.setPins(SS,RST,DI0); // CS, reset, IRQ pin
 
@@ -130,7 +131,7 @@ void TaskListen(void* pParams)
   
   for(;;)
   {
-    if(gBeaconCount >= 20)
+    if(gBeaconCount >= 4)
     {
       Serial.println("Going into power down");
       power_down();
@@ -138,7 +139,8 @@ void TaskListen(void* pParams)
       continue;
     }
     digitalWrite(LED_BUILTIN, HIGH);
-    gLedCount++;
+        gLedCount++;
+    
     // Parse incoming packet
     int packetSize = LoRa.parsePacket();
     #ifdef DEBUG_DUMMY
@@ -147,6 +149,7 @@ void TaskListen(void* pParams)
     
     if (packetSize == PACKET_SIZE )
     {
+      
       // Read whole packet into char buffer of same size
       char inputBuffer[packetSize]; // Kan zijn dat dit niet werkt
       inputBuffer[packetSize] = 0;
@@ -165,6 +168,7 @@ void TaskListen(void* pParams)
       // Check if correct GW number
       if(inputBuffer[2] == '0' && inputBuffer[3] == '4')
       {
+        
         // Convert next delay chars to integer and tickcount
         int iDelay = parseDelay(&inputBuffer[4]);
         //int iDelay = String(&inputBuffer[5]).toInt();
@@ -177,13 +181,18 @@ void TaskListen(void* pParams)
         Serial.println(tDelay);
         #endif
         
+        
         // Read the temperature of the chip and send the result back to the GW
+        bWarmingUp = true;
+        vTaskDelay(15);
+        
         //delay(100);
         double temp = read_temp();
+        bWarmingUp = false;
   
         LoRa.beginPacket();
         LoRa.print(temp); //TODO: More info like Team num?
-        LoRa.endPacket();    
+        LoRa.endPacket();  
         gBeaconCount++;
         
         // Before writing to DB, attempt to take the Semaphore for it
@@ -202,16 +211,17 @@ void TaskListen(void* pParams)
         xSemaphoreGive(gSemDB);
 
         // Delay this task so the board can go to shallow sleep
-        if(--gLedCount <= 0)
-        digitalWrite(LED_BUILTIN, LOW);
+        if(--gLedCount <= 0) digitalWrite(LED_BUILTIN, LOW);
         LoRa.sleep();
         vTaskDelay(tDelay - WAKEUP_MARGIN_TICKS); 
         continue;
       }
+      if(--gLedCount <= 0) digitalWrite(LED_BUILTIN, LOW);
     }
+    if(--gLedCount <= 0) digitalWrite(LED_BUILTIN, LOW);
     
     // This section only executes when something about the packet was incorrect (size, GW number...)
-    while (LoRa.available()) { LoRa.read(); }
+    //while (LoRa.available()) { LoRa.read(); }
     vTaskDelay(1); // Give lower tasks a chance ;)
   }
 }
@@ -298,8 +308,7 @@ void TaskCommands(void*) //Commands should only be supported in deep sleep => ak
       }
       //Serial.flush();
     }
-    if(--gLedCount <= 0)
-      digitalWrite(LED_BUILTIN, LOW);
+    if(--gLedCount <= 0) digitalWrite(LED_BUILTIN, LOW);
   }
   //vTaskDelay(1000 / portTICK_PERIOD_MS); // Fast enough for usability
 }
@@ -367,8 +376,8 @@ inline void print_whole_db()
 *******************************************************************************/
 void loop() // Remember that loop() is simply the FreeRTOS idle task. Something to do, when there's nothing else to do.
 {
+  if(!bWarmingUp) power_adc_disable();
   
-  power_adc_disable();
 //  power_spi_disable();
   power_twi_disable();
   power_timer0_disable();
@@ -413,10 +422,13 @@ void loop() // Remember that loop() is simply the FreeRTOS idle task. Something 
   
   portEXIT_CRITICAL();
   sleep_cpu(); // good night.
+  portENTER_CRITICAL();
+
    
   // Ugh. I've been woken up. Better disable sleep mode.
   sleep_reset(); // sleep_reset is faster than sleep_disable() because it clears all sleep_mode() bits.
   power_all_enable();
+  portEXIT_CRITICAL();
   
   // Shouldnt more stuff be turned on again
   if(Serial.available())
@@ -475,7 +487,6 @@ void power_down()
 {
   LoRa.sleep(); // Make sure the radio is off
   Serial.println("Powering down");
-  delay(100);
   //Serial.end();
   set_sleep_mode(SLEEP_MODE_PWR_DOWN);
   cli();
@@ -494,10 +505,5 @@ void power_down()
   sleep_disable();
 //  power_all_enable();
   sei();  
-  delay(100);
-  Serial.flush();
-  //Serial.begin(9600);
-  //while(!Serial) {;}
-  Serial.println("I have awoken!");
   gBeaconCount = 0;
 }
