@@ -19,19 +19,19 @@
 
 // Description:
 //   This FreeRTOS program will wait for incoming beacon, save and send temperature data and go into sleep mode (timer still active)
-//   After 20 consecutive connections, deep sleep will be activated. An external interupt can wake up the board.
-//   TODO: commands
-//   Zet temp sturen op hogere prioriteit dan opslaan task (kan worden gedaan na het sturen).
-//   Houd bij hoe lang het duurde om tasks uit te voeren --> om slaap beter te berekenen.
+//   After 20 consecutive packets, deep sleep will be activated. An external interupt can wake up the board.
 
 #define INCLUDE_vTaskSuspend 1;
 #define PACKET_SIZE 5
 #define WAKEUP_MARGIN_TICKS 35
-#define DEBUG 1
-//#define DEBUG_DUMMY 1
+#define BEACON_MAX 20
+//#define DEBUG 1
+#define DEBUG_LED 1
+#define DEBUG_DUMMY 1
+//#define DEBUG_CLEAR_EEPROM 1
 
 //-------------- DB Structures START --------------
-#define TABLE_SIZE 512
+#define TABLE_SIZE 1024
 struct record {
   int id;
   double temp;
@@ -67,7 +67,7 @@ bool bWarmingUp = false;
 void setup() {
   
   Serial.begin(9600);
-  //while(!Serial) {;}
+  while(!Serial) {;}
   
   LoRa.setPins(SS,RST,DI0); // CS, reset, IRQ pin
 
@@ -77,6 +77,15 @@ void setup() {
   }
 
   pinMode(LED_BUILTIN,OUTPUT);
+
+  #ifdef DEBUG_CLEAR_EEPROM
+  for(int i = 0; i < EEPROM.length(); i++)
+  {
+    EEPROM.write(i, 0);
+  }
+  Serial.println("EEPROM CLEARED");
+  #endif
+  
 
   // Attempt to open existing DB
   EDB_Status stat = db.open(0);
@@ -131,15 +140,17 @@ void TaskListen(void* pParams)
   
   for(;;)
   {
-    if(gBeaconCount >= 4)
+    if(gBeaconCount >= BEACON_MAX)
     {
       Serial.println("Going into power down");
       power_down();
       //vTaskDelay(portMAX_DELAY);
       continue;
     }
-    digitalWrite(LED_BUILTIN, HIGH);
-        gLedCount++;
+
+    #ifdef DEBUG_LED
+    enable_led();
+    #endif
     
     // Parse incoming packet
     int packetSize = LoRa.parsePacket();
@@ -161,9 +172,11 @@ void TaskListen(void* pParams)
       #ifdef DEBUG_DUMMY
       dummyBeacon(inputBuffer, PACKET_SIZE);
       #endif
-      
+
+      #ifdef DEBUG
       Serial.print("Received packet: ");
       Serial.println(inputBuffer);
+      #endif
 
       // Check if correct GW number
       if(inputBuffer[2] == '0' && inputBuffer[3] == '4')
@@ -184,9 +197,8 @@ void TaskListen(void* pParams)
         
         // Read the temperature of the chip and send the result back to the GW
         bWarmingUp = true;
-        vTaskDelay(15);
+        vTaskDelay(15); // Allow ADC to recover from sleep
         
-        //delay(100);
         double temp = read_temp();
         bWarmingUp = false;
   
@@ -196,7 +208,12 @@ void TaskListen(void* pParams)
         gBeaconCount++;
         
         // Before writing to DB, attempt to take the Semaphore for it
-        xSemaphoreTake(gSemDB, portMAX_DELAY);
+        
+        if(xSemaphoreTake(gSemDB, 50) != pdTRUE)
+        {
+          Serial.println("SEMAPHORE DEALDOCK");
+          continue;
+        }
 
         // The currentRecord struct object is used to create and read records.
         currentRecord.id = gRecNr++;
@@ -211,20 +228,36 @@ void TaskListen(void* pParams)
         xSemaphoreGive(gSemDB);
 
         // Delay this task so the board can go to shallow sleep
-        if(--gLedCount <= 0) digitalWrite(LED_BUILTIN, LOW);
-        LoRa.sleep();
-        vTaskDelay(tDelay - WAKEUP_MARGIN_TICKS); 
+        #ifdef DEBUG_LED
+        disable_led();
+        #endif
+        if(gBeaconCount < BEACON_MAX) vTaskDelay(tDelay - WAKEUP_MARGIN_TICKS); 
         continue;
       }
-      if(--gLedCount <= 0) digitalWrite(LED_BUILTIN, LOW);
+      //disable_led();
     }
-    if(--gLedCount <= 0) digitalWrite(LED_BUILTIN, LOW);
+    #ifdef DEBUG_LED
+        disable_led();
+    #endif
     
     // This section only executes when something about the packet was incorrect (size, GW number...)
     //while (LoRa.available()) { LoRa.read(); }
     vTaskDelay(1); // Give lower tasks a chance ;)
   }
 }
+
+#ifdef DEBUG_LED
+inline void enable_led()
+{
+  digitalWrite(LED_BUILTIN, HIGH);
+  gLedCount++;
+}
+
+inline void disable_led()
+{
+  if(--gLedCount <= 0) digitalWrite(LED_BUILTIN, LOW);
+}
+#endif
 
 /*******************************************************************************
 * Name: parseDelay
@@ -269,7 +302,7 @@ inline int dummyBeacon(char* buff, size_t size)
   buff[2] = '0';
   buff[3] = '4';
 
-  buff[4] = '3';
+  buff[4] = '1';
   return PACKET_SIZE;
 }
 
@@ -285,8 +318,6 @@ void TaskCommands(void*) //Commands should only be supported in deep sleep => ak
 {
   for(;;){
     xSemaphoreTake(gSemCommand, portMAX_DELAY);
-    digitalWrite(LED_BUILTIN, HIGH);
-    gLedCount++;
     if(Serial.available()){
       int command = Serial.parseInt();
       switch(command){
@@ -299,7 +330,10 @@ void TaskCommands(void*) //Commands should only be supported in deep sleep => ak
         print_whole_db();
         break;
        case 3:
+        taskENTER_CRITICAL();
         power_down();
+        taskEXIT_CRITICAL();
+        sei();
         break;
        default:
         Serial.print("Invalid command: ");
@@ -308,7 +342,6 @@ void TaskCommands(void*) //Commands should only be supported in deep sleep => ak
       }
       //Serial.flush();
     }
-    if(--gLedCount <= 0) digitalWrite(LED_BUILTIN, LOW);
   }
   //vTaskDelay(1000 / portTICK_PERIOD_MS); // Fast enough for usability
 }
@@ -377,7 +410,7 @@ inline void print_whole_db()
 void loop() // Remember that loop() is simply the FreeRTOS idle task. Something to do, when there's nothing else to do.
 {
   if(!bWarmingUp) power_adc_disable();
-  
+//  
 //  power_spi_disable();
   power_twi_disable();
   power_timer0_disable();
@@ -427,7 +460,7 @@ void loop() // Remember that loop() is simply the FreeRTOS idle task. Something 
    
   // Ugh. I've been woken up. Better disable sleep mode.
   sleep_reset(); // sleep_reset is faster than sleep_disable() because it clears all sleep_mode() bits.
-  power_all_enable();
+  power_adc_enable();
   portEXIT_CRITICAL();
   
   // Shouldnt more stuff be turned on again
@@ -483,27 +516,23 @@ inline double read_temp()
 * Description: Puts the board into deep sleep mode (powerdown).
 *               See datasheet for waking up sources (mostly external int's).
 *******************************************************************************/
-void power_down()
+inline void power_down()
 {
   LoRa.sleep(); // Make sure the radio is off
-  Serial.println("Powering down");
-  //Serial.end();
   set_sleep_mode(SLEEP_MODE_PWR_DOWN);
   cli();
   sleep_enable();
   #if defined(BODS) && defined(BODSE)
   sleep_bod_disable();
   #endif
-//  power_adc_disable();
-//  power_spi_disable();
-//  power_timer0_disable();
-//  power_timer1_disable();
-//  power_timer2_disable();
-//  power_twi_disable();
-  sei();
+  power_adc_disable();
+  power_spi_disable();
+  power_timer0_disable();
+  power_timer1_disable();
+  power_timer2_disable();
+  power_twi_disable();
   sleep_cpu();
   sleep_disable();
-//  power_all_enable();
-  sei();  
+  power_all_enable();
   gBeaconCount = 0;
 }
